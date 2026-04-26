@@ -9,6 +9,11 @@ The main goal of the iterator API is to allow to more easily iterate over the qu
 ```go
 package main
 
+import (
+    "database/sql"
+    "github.com/YuriyNasretdinov/sqly"
+)
+
 // The database field tags are the same as in `sqlx`, prefixed with "db:".
 // In fact you can continue using `sqlx` alongside with `sqly`.
 type User struct {
@@ -21,7 +26,7 @@ func main() {
 
     // Create an iterator object that can be used to send queries to db
     // and iterate over the results decoding them into (*User, error).
-    iter := NewIterator[User](db)
+    iter := sqly.NewIterator[User](db)
 
     // Sending a query is as simple as calling `Query()` as with regular `database/sql`,
     // with the main difference being that `iter.Query()` returns an iterator over
