@@ -16,7 +16,8 @@ var mapper = reflectx.NewMapperFunc("db", strings.ToLower)
 
 func NewIterator[T any](db *sql.DB) *Iterator[T] {
 	return &Iterator[T]{
-		db: db,
+		db:     db,
+		unsafe: true,
 	}
 }
 
@@ -25,8 +26,13 @@ type Iterator[T any] struct {
 	unsafe bool
 }
 
-func (i *Iterator[T]) WithUnsafe(unsafe bool) *Iterator[T] {
-	i.unsafe = unsafe
+// IgnoreUnknownFields controls whether or not columns that cannot be mapped
+// to any field in the provided struct are ignored. The default is to allow
+// unknown fields, similar to how `encoding/json` package works. It allows
+// for smooth SQL schema migrations (adding new fields doesn't break `SELECT *`
+// queries before the code is updated).
+func (i *Iterator[T]) IgnoreUnknownFields(v bool) *Iterator[T] {
+	i.unsafe = !v
 	return i
 }
 

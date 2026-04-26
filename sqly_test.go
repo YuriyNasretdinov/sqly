@@ -161,7 +161,7 @@ func TestScanError(t *testing.T) {
 
 	var orders []*order
 
-	iter := NewIterator[order](db)
+	iter := NewIterator[order](db).IgnoreUnknownFields(false)
 
 	haveError := false
 
