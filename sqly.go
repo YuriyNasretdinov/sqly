@@ -8,6 +8,7 @@ import (
 	"iter"
 	"reflect"
 	"strings"
+	"sync/atomic"
 
 	"github.com/jmoiron/sqlx/reflectx"
 )
@@ -32,14 +33,25 @@ type Iterator[T any] struct {
 // for smooth SQL schema migrations (adding new fields doesn't break `SELECT *`
 // queries before the code is updated).
 func (i *Iterator[T]) IgnoreUnknownFields(v bool) *Iterator[T] {
-	i.unsafe = !v
+	i.unsafe = v
 	return i
 }
 
+// Query is a wrapper around QueryContext with context.Background().
 func (i *Iterator[T]) Query(query string, args ...any) iter.Seq2[*T, error] {
 	return i.QueryContext(context.Background(), query, args...)
 }
 
+// QueryContext returns an iterator that executes the query and then starts returning rows of
+// the specific type one by one. When an error is returned iteration stops.
+//
+// Example:
+//
+//	iter := sqly.NewIterator[User](db)
+//	for u, err := range iter.Query(`SELECT * FROM users ORDER BY id`) {
+//	    if err != nil { ... }
+//	    ...
+//	}
 func (i *Iterator[T]) QueryContext(ctx context.Context, query string, args ...any) iter.Seq2[*T, error] {
 	return func(yield func(*T, error) bool) {
 		rowsRaw, err := i.db.QueryContext(ctx, query, args...)
@@ -76,6 +88,60 @@ func (i *Iterator[T]) QueryContext(ctx context.Context, query string, args ...an
 			yield(nil, err)
 		}
 	}
+}
+
+// TemplateQuery is wrapper around TemplateQueryContext() with context.Background().
+func (i *Iterator[T]) TemplateQuery(query string, args ...any) (iter.Seq[*T], func() error) {
+	return i.TemplateQueryContext(context.Background(), query, args...)
+}
+
+// TemplateQueryContext is a wrapper around QueryContext() to allow it to be used in text/template or html/template.
+// It returns an iterator with a single value instead of two and then returns a function to get an error
+// in case it happened. In case of any errors the iterator returns a nil pointer as the last entry so that
+// the template rendering fails, making the error obvious.
+//
+// TemplateQueryContext() allows you to do streaming rendering of query results instead of the usual
+// buffering into a temporary slice first.
+//
+// Usage example:
+//
+//	const tplText = `{{ range .users }}<div><b>{{ .ID }}</b> {{ .Name }}</div>{{ end }}`
+//	tpl := template.Must(template.New("test").Parse(tplText))
+//
+//	users, getErr := iter.TemplateQueryContext(ctx, `SELECT * FROM users`)
+//	if err := tpl.Execute(w, map[string]any{"users": users}); err != nil {
+//		log.Printf("Failed to render template: %v. SELECT error: %v", err, getErr())
+//	}
+func (i *Iterator[T]) TemplateQueryContext(ctx context.Context, query string, args ...any) (iter.Seq[*T], func() error) {
+	var errPtr atomic.Pointer[error]
+	getErr := func() error {
+		err := errPtr.Load()
+		if err == nil {
+			return errors.New("results iteration hasn't finished before calling getErr()")
+		}
+		return *err
+	}
+
+	return func(yield func(*T) bool) {
+		var nilErr error
+
+		for res, err := range i.QueryContext(ctx, query, args...) {
+			if err != nil {
+				errPtr.Store(&err)
+
+				// yield nil pointer so that template rendering fails, making failure harder to miss
+				yield(nil)
+				return
+			}
+
+			if !yield(res) {
+				errPtr.Store(&nilErr)
+				return
+			}
+		}
+
+		errPtr.Store(&nilErr)
+	}, getErr
 }
 
 // Rows is a wrapper around sql.Rows which caches costly reflect operations

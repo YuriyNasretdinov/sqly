@@ -1,7 +1,9 @@
 package sqly
 
 import (
+	"bytes"
 	"database/sql"
+	"html/template"
 	"path/filepath"
 	"testing"
 
@@ -93,6 +95,55 @@ func TestSimple(t *testing.T) {
 
 	if diff := cmp.Diff(users, wantUsers); diff != "" {
 		t.Fatalf("Unexpected diff for users list: %s", diff)
+	}
+}
+
+func TestSimpleTemplate(t *testing.T) {
+	db := createDB(t, filepath.Join(t.TempDir(), "test.sqlite3"))
+
+	addUser(t, db, "Yury")
+	addUser(t, db, "John")
+
+	const tplText = `{{ range . }}<div><b>{{ .ID }}</b> {{.Name }}</div>{{ end }}`
+	tpl := template.Must(template.New("test").Parse(tplText))
+
+	iter := NewIterator[user](db)
+	users, getErr := iter.TemplateQuery(`SELECT * FROM users ORDER BY id`)
+	if getErr() == nil {
+		t.Errorf("getErr() should return an error before iteration began")
+	}
+
+	var b bytes.Buffer
+
+	if err := tpl.Execute(&b, users); err != nil {
+		t.Errorf("Failed to render template: %v; SELECT error: %v", err, getErr())
+	}
+
+	if got, want := b.String(), `<div><b>1</b> Yury</div><div><b>2</b> John</div>`; got != want {
+		t.Errorf("Template rendered into %s, want %s", got, want)
+	}
+}
+
+func TestSimpleTemplateError(t *testing.T) {
+	db := createDB(t, filepath.Join(t.TempDir(), "test.sqlite3"))
+
+	addUser(t, db, "Yury")
+	addUser(t, db, "John")
+
+	const tplText = `{{ range . }}<div><b>{{ .ID }}</b> {{.Name }}</div>{{ end }}`
+	tpl := template.Must(template.New("test").Parse(tplText))
+
+	iter := NewIterator[user](db)
+	users, getErr := iter.TemplateQuery(`ELECT * FROM users ORDER BY id`)
+	if getErr() == nil {
+		t.Errorf("getErr() should return an error before iteration began")
+	}
+
+	var b bytes.Buffer
+	if err := tpl.Execute(&b, users); err == nil {
+		t.Errorf("Template rendered successfully despite an error")
+	} else if getErr() == nil {
+		t.Errorf("getErr() returned nil upon template rendering failure")
 	}
 }
 
